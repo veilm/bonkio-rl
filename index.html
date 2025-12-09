@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>bonk.io sandbox</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <section class="canvas-wrapper">
+        <canvas id="game" width="960" height="540"></canvas>
+      </section>
+      <section class="panel">
+        <h1>Bonk physics scratchpad</h1>
+        <p>
+          Arrow keys push horizontally, <strong>up</strong> or <strong>space</strong> jumps,
+          <strong>down</strong> fast-falls, <strong>X</strong> toggles the heavy state.
+        </p>
+        <p>
+          Goal: replicate the feel of bonk.io&rsquo;s movement and the X key&rsquo;s momentum
+          shift before optimizing for RL.
+        </p>
+        <dl>
+          <div>
+            <dt>Heavy right now?</dt>
+            <dd id="heavyState">no</dd>
+          </div>
+          <div>
+            <dt>Player speed</dt>
+            <dd id="playerSpeed">0</dd>
+          </div>
+          <div>
+            <dt>Dummy speed</dt>
+            <dd id="dummySpeed">0</dd>
+          </div>
+        </dl>
+        <p class="note">
+          Tip: collide with the orange dummy with and without X held to see how
+          mass changes the momentum transfer.
+        </p>
+      </section>
+    </main>
+    <script type="module" src="main.js"></script>
+  </body>
+</html>

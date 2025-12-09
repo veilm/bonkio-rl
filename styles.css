@@ -1,0 +1,91 @@
+:root {
+  font-family: "Inter", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont,
+    sans-serif;
+  background: #0b0c10;
+  color: #f0f4f8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+}
+
+main.layout {
+  width: min(1200px, 100%);
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.canvas-wrapper {
+  background: #151820;
+  padding: 0.5rem;
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+}
+
+canvas#game {
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+  background: #0c1018;
+}
+
+.panel {
+  background: #161b22;
+  padding: 1rem 1.5rem;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.panel h1 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.panel p {
+  margin: 0;
+  line-height: 1.4;
+}
+
+.panel dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.75rem;
+}
+
+.panel dt {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+}
+
+.panel dd {
+  margin: 0.2rem 0 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.note {
+  font-size: 0.85rem;
+  color: #cbd5f5;
+  opacity: 0.8;
+}
+
+@media (max-width: 960px) {
+  main.layout {
+    grid-template-columns: 1fr;
+  }
+}
