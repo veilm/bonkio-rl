@@ -6,12 +6,31 @@ const WORLD = {
   height: canvas.height,
   floor: canvas.height - 70,
   gravity: 2200,
-  airDrag: 0.995,
-  groundFriction: 8,
-  restitutionGround: 0.45,
-  restitutionWalls: 0.4,
+  airDrag: 0.992,
+  restitutionWalls: 0.35,
   restitutionBonk: 0.92,
 };
+
+const SURFACES = [
+  {
+    x1: 0,
+    x2: canvas.width,
+    y: WORLD.floor,
+    type: 'bounce',
+    bounce: 0.94,
+    bounceThreshold: 240,
+    minBounceVelocity: 460,
+    upBoost: 1.12,
+    friction: 0,
+  },
+  {
+    x1: WORLD.width * 0.35,
+    x2: WORLD.width * 0.65,
+    y: WORLD.floor - 120,
+    type: 'flat',
+    friction: 1,
+  },
+];
 
 const controls = new Set();
 window.addEventListener('keydown', (event) => {
@@ -28,6 +47,8 @@ class Bonk {
   constructor(options) {
     this.x = options.x;
     this.y = options.y;
+    this.prevX = this.x;
+    this.prevY = this.y;
     this.vx = options.vx ?? 0;
     this.vy = options.vy ?? 0;
     this.color = options.color ?? '#4cc9f0';
@@ -42,9 +63,12 @@ class Bonk {
     this.grounded = false;
     this.timeSinceGrounded = 0;
     this.jumpImpulse = options.jumpImpulse ?? 780;
-    this.moveForce = options.moveForce ?? 2600;
-    this.heavyMoveForce = options.heavyMoveForce ?? 1500;
-    this.fastFallForce = options.fastFallForce ?? 1800;
+    this.moveForce = options.moveForce ?? 1650;
+    this.heavyMoveForce = options.heavyMoveForce ?? 1100;
+    this.fastFallForce = options.fastFallForce ?? 1400;
+    this.maxAirSpeed = options.maxAirSpeed ?? 420;
+    this.maxGroundSpeed = options.maxGroundSpeed ?? 520;
+    this.jumpGrace = options.jumpGrace ?? 0.18;
     this.forceX = 0;
     this.forceY = 0;
   }
@@ -61,7 +85,7 @@ class Bonk {
   }
 
   canJump() {
-    return this.grounded && this.timeSinceGrounded < 0.05;
+    return this.timeSinceGrounded < this.jumpGrace;
   }
 
   applyControls(dt, now) {
@@ -89,7 +113,7 @@ class Bonk {
       this.setHeavy(heavyWindow);
       const targetX = WORLD.width * 0.55 + Math.sin(now * 0.0006) * 180;
       const dir = Math.sign(targetX - this.x) || 0;
-      const targetForce = (this.isHeavy ? 1200 : 1800) * dir;
+      const targetForce = (this.isHeavy ? 800 : 1200) * dir;
       this.forceX += targetForce;
 
       if (this.grounded && Math.random() < 0.005) {
@@ -101,14 +125,19 @@ class Bonk {
   }
 
   integrate(dt) {
+    const groundedLastFrame = this.grounded;
+    this.prevX = this.x;
+    this.prevY = this.y;
     const ax = this.forceX / this.mass;
     const ay = WORLD.gravity + this.forceY / this.mass;
 
     this.vx += ax * dt;
     this.vy += ay * dt;
 
-    if (!this.grounded) {
+    if (!groundedLastFrame) {
       this.vx *= WORLD.airDrag;
+      this.vy *= WORLD.airDrag;
+    } else {
       this.vy *= WORLD.airDrag;
     }
 
@@ -116,26 +145,67 @@ class Bonk {
     this.y += this.vy * dt;
 
     this.timeSinceGrounded += dt;
+    this.grounded = false;
+  }
+
+  applySurfaceConstraints(surfaces) {
+    const downPress = this.control === 'player' && controls.has('ArrowDown');
+    const upPress =
+      this.control === 'player' &&
+      (controls.has('ArrowUp') || controls.has('Space'));
+
+    for (const surface of surfaces) {
+      const withinX =
+        this.x + this.radius > surface.x1 && this.x - this.radius < surface.x2;
+      const crossingDownward =
+        this.prevY + this.radius <= surface.y &&
+        this.y + this.radius >= surface.y &&
+        this.vy >= 0;
+      if (!withinX || !crossingDownward) continue;
+
+      this.y = surface.y - this.radius;
+      const incomingVy = Math.max(this.vy, 0);
+      if (surface.type === 'bounce') {
+        const threshold = surface.bounceThreshold ?? 200;
+        const wantsBounce = incomingVy > threshold || downPress;
+        if (wantsBounce) {
+          const minVelocity = surface.minBounceVelocity ?? 420;
+          const bounceFactor = surface.bounce ?? 0.9;
+          const baseVelocity = downPress
+            ? Math.max(incomingVy * 1.1, minVelocity)
+            : incomingVy;
+          let newVy = -baseVelocity * bounceFactor;
+          if (upPress) newVy *= surface.upBoost ?? 1.08;
+          this.vy = newVy;
+          this.grounded = false;
+          this.timeSinceGrounded = Number.POSITIVE_INFINITY;
+        } else {
+          this.vy = 0;
+          this.grounded = true;
+          this.timeSinceGrounded = 0;
+        }
+      } else {
+        this.vy = 0;
+        this.grounded = true;
+        this.timeSinceGrounded = 0;
+      }
+
+      if (surface.friction) {
+        this.vx *= Math.max(0, 1 - surface.friction);
+      }
+
+      return;
+    }
+  }
+
+  clampHorizontalVelocity() {
+    const limit = this.grounded ? this.maxGroundSpeed : this.maxAirSpeed;
+    if (Math.abs(this.vx) > limit) {
+      this.vx = limit * Math.sign(this.vx);
+    }
   }
 
   handleBounds() {
-    // Floor
-    if (this.y + this.radius > WORLD.floor) {
-      this.y = WORLD.floor - this.radius;
-      if (this.vy > 0) {
-        this.vy = -this.vy * WORLD.restitutionGround;
-      }
-      if (Math.abs(this.vy) < 40) this.vy = 0;
-      this.grounded = true;
-      this.timeSinceGrounded = 0;
-
-      // Apply friction when grounded
-      const frictionFactor = Math.max(0, 1 - WORLD.groundFriction * 0.016);
-      this.vx *= frictionFactor;
-    } else {
-      this.grounded = false;
-    }
-
     // Left wall
     if (this.x - this.radius < 0) {
       this.x = this.radius;
@@ -171,8 +241,10 @@ const dummy = new Bonk({
   outline: '#ffd166',
   control: 'dummy',
   baseMass: 1.2,
-  moveForce: 2100,
-  heavyMoveForce: 1400,
+  moveForce: 1500,
+  heavyMoveForce: 1000,
+  maxAirSpeed: 360,
+  maxGroundSpeed: 420,
 });
 
 dummy.vx = -120;
@@ -224,19 +296,19 @@ const dummySpeedEl = document.getElementById('dummySpeed');
 function drawFloor() {
   ctx.fillStyle = '#111521';
   ctx.fillRect(0, 0, WORLD.width, WORLD.height);
-  ctx.fillStyle = '#1d2536';
+  ctx.fillStyle = '#0c1320';
   ctx.fillRect(0, WORLD.floor, WORLD.width, WORLD.height - WORLD.floor);
-  ctx.fillStyle = '#2d374b';
-  ctx.fillRect(0, WORLD.floor + 8, WORLD.width, WORLD.height - WORLD.floor - 8);
-
-  ctx.fillStyle = '#222c3f';
-  ctx.fillRect(WORLD.width * 0.35, WORLD.floor - 120, WORLD.width * 0.3, 20);
+  for (const surface of SURFACES) {
+    const height = surface.type === 'flat' ? 18 : 12;
+    ctx.fillStyle = surface.type === 'flat' ? '#6d28d9' : '#1d4ed8';
+    ctx.fillRect(surface.x1, surface.y - height, surface.x2 - surface.x1, height);
+  }
 }
 
 function drawBonk(b) {
   ctx.beginPath();
   ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
-  ctx.fillStyle = b.color;
+  ctx.fillStyle = b.isHeavy ? '#ffffff' : b.color;
   ctx.fill();
   ctx.lineWidth = b.isHeavy ? 5 : 3;
   ctx.strokeStyle = b.outline;
@@ -264,7 +336,9 @@ function frame(now) {
 
   for (const bonk of bonks) {
     bonk.integrate(dt);
+    bonk.applySurfaceConstraints(SURFACES);
     bonk.handleBounds();
+    bonk.clampHorizontalVelocity();
   }
 
   resolveBonkCollision(player, dummy);
