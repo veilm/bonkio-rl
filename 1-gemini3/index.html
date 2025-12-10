@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Simple Bonk.io Clone</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: white;
+            font-family: sans-serif;
+            overflow: hidden;
+        }
+        #gameContainer {
+            position: relative;
+        }
+        canvas {
+            background-color: #bce1ff; /* Sky blue */
+            border: 4px solid #444;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+        #ui {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+<div id="gameContainer">
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <div id="ui">
+        <h3>Controls</h3>
+        <p><span style="color:#0f0">Green</span>: Arrows + 'X' (Heavy)</p>
+        <p><span style="color:#f00">Red</span>: WASD + 'Shift' (Heavy)</p>
+        <p><i>Press R to Reset</i></p>
+    </div>
+</div>
+
+<script>
+/**
+ * CONFIGURATION & CONSTANTS
+ */
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const PHYSICS = {
+    gravity: 0.2,
+    friction: 0.98,        // Air resistance
+    groundFriction: 0.92,  // Ground friction (sliding)
+    elasticity: 0.6,       // Bounciness of walls/floor (0 = no bounce)
+    playerRadius: 15,
+    speed: 0.5,            // Acceleration force
+    jumpForce: 7,
+    heavyMassMult: 50,     // How much heavier 'heavy' mode is
+    heavyColor: '#ffffff'  // Visual indicator for heavy
+};
+
+/**
+ * GAME STATE
+ */
+let keys = {};
+
+// The Platform (Simple Flat)
+const platforms = [
+    { x: 100, y: 400, w: 600, h: 50 }
+];
+
+// The Players
+let players = [];
+
+function resetGame() {
+    players = [
+        createPlayer(200, 300, '#00cc00', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'x'),
+        createPlayer(600, 300, '#cc0000', 'w', 's', 'a', 'd', 'Shift')
+    ];
+}
+
+function createPlayer(x, y, color, up, down, left, right, heavyKey) {
+    return {
+        x: x,
+        y: y,
+        vx: 0,
+        vy: 0,
+        radius: PHYSICS.playerRadius,
+        color: color,
+        baseColor: color,
+        mass: 1,
+        isHeavy: false,
+        onGround: false,
+        controls: { up, down, left, right, heavyKey },
+        dead: false
+    };
+}
+
+/**
+ * INPUT HANDLING
+ */
+window.addEventListener('keydown', (e) => {
+    keys[e.key] = true;
+    if (e.key.toLowerCase() === 'r') resetGame();
+});
+
+window.addEventListener('keyup', (e) => {
+    keys[e.key] = false;
+});
+
+/**
+ * PHYSICS ENGINE
+ */
+function update() {
+    players.forEach(p => {
+        if (p.dead) return;
+
+        // 1. Check Heavy State
+        if (keys[p.controls.heavyKey]) {
+            p.isHeavy = true;
+            p.mass = PHYSICS.heavyMassMult;
+        } else {
+            p.isHeavy = false;
+            p.mass = 1;
+        }
+
+        // 2. Apply Input Forces
+        // Heavy players move slightly slower
+        let accel = p.isHeavy ? PHYSICS.speed * 0.3 : PHYSICS.speed; 
+        
+        if (keys[p.controls.left])  p.vx -= accel;
+        if (keys[p.controls.right]) p.vx += accel;
+        if (keys[p.controls.up] && p.onGround) {
+            p.vy -= PHYSICS.jumpForce;
+            p.onGround = false;
+        }
+        if (keys[p.controls.down])  p.vy += accel;
+
+        // 3. Apply Gravity
+        p.vy += PHYSICS.gravity;
+
+        // 4. Apply Friction
+        if (p.onGround) {
+            p.vx *= PHYSICS.groundFriction;
+        } else {
+            p.vx *= PHYSICS.friction;
+        }
+
+        // 5. Update Position
+        p.x += p.vx;
+        p.y += p.vy;
+
+        // 6. Reset Ground State for next frame
+        p.onGround = false;
+
+        // 7. Platform Collisions
+        platforms.forEach(plat => {
+            // Simple AABB vs Circle-ish collision
+            // We check if the player is within the horizontal bounds of the platform
+            // AND if they are falling onto it.
+            if (p.x > plat.x - p.radius && p.x < plat.x + plat.w + p.radius) {
+                // Ceiling collision (hitting head)
+                if (p.y - p.radius < plat.y + plat.h && p.y - p.radius > plat.y && p.vy < 0) {
+                     p.y = plat.y + plat.h + p.radius;
+                     p.vy *= -0.5;
+                }
+                // Floor collision (landing)
+                else if (p.y + p.radius > plat.y && p.y + p.radius < plat.y + plat.h && p.vy >= 0) {
+                    p.y = plat.y - p.radius;
+                    p.vy = 0; // No bounce on floor as requested
+                    p.onGround = true;
+                }
+            }
+        });
+
+        // 8. Screen Bounds (Death)
+        if (p.y > canvas.height + 100) {
+            p.dead = true;
+            p.x = -9999; // Move away
+        }
+    });
+
+    // 9. Player vs Player Collision (The "Bonk" mechanics)
+    // We check every pair of players
+    for (let i = 0; i < players.length; i++) {
+        for (let j = i + 1; j < players.length; j++) {
+            let p1 = players[i];
+            let p2 = players[j];
+
+            if (p1.dead || p2.dead) continue;
+
+            let dx = p2.x - p1.x;
+            let dy = p2.y - p1.y;
+            let distance = Math.sqrt(dx * dx + dy * dy);
+
+            // If circles overlap
+            if (distance < p1.radius + p2.radius) {
+                // Calculate collision normal
+                let nx = dx / distance;
+                let ny = dy / distance;
+
+                // Separate players so they don't stick
+                let overlap = (p1.radius + p2.radius - distance) / 2;
+                p1.x -= nx * overlap;
+                p1.y -= ny * overlap;
+                p2.x += nx * overlap;
+                p2.y += ny * overlap;
+
+                // Momentum Exchange (1D Elastic Collision along normal)
+                // Relative Velocity
+                let rvx = p2.vx - p1.vx;
+                let rvy = p2.vy - p1.vy;
+
+                // Velocity along normal
+                let velAlongNormal = rvx * nx + rvy * ny;
+
+                // Do not resolve if velocities are separating
+                if (velAlongNormal > 0) continue;
+
+                // Impulse scalar
+                let e = 0.8; // Bounciness of players hitting each other
+                let jVal = -(1 + e) * velAlongNormal;
+                jVal /= (1 / p1.mass + 1 / p2.mass);
+
+                // Apply Impulse
+                let impulseX = jVal * nx;
+                let impulseY = jVal * ny;
+
+                p1.vx -= (1 / p1.mass) * impulseX;
+                p1.vy -= (1 / p1.mass) * impulseY;
+                p2.vx += (1 / p2.mass) * impulseX;
+                p2.vy += (1 / p2.mass) * impulseY;
+            }
+        }
+    }
+}
+
+/**
+ * RENDERING
+ */
+function draw() {
+    // Clear Screen
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw Platforms
+    ctx.fillStyle = '#666';
+    platforms.forEach(plat => {
+        ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
+    });
+
+    // Draw Players
+    players.forEach(p => {
+        if (p.dead) return;
+
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        
+        // Visual Logic for Heavy
+        if (p.isHeavy) {
+            ctx.fillStyle = PHYSICS.heavyColor;
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = p.baseColor;
+            ctx.stroke();
+        } else {
+            ctx.fillStyle = p.baseColor;
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = 'black';
+        }
+        
+        ctx.fill();
+        
+        // Draw Eyes (to see direction roughly)
+        // Just simple dots for style
+        ctx.fillStyle = 'white';
+        ctx.beginPath();
+        ctx.arc(p.x - 5, p.y - 2, 4, 0, Math.PI * 2);
+        ctx.arc(p.x + 5, p.y - 2, 4, 0, Math.PI * 2);
+        ctx.fill();
+    });
+
+    // Game Over Text
+    const alivePlayers = players.filter(p => !p.dead);
+    if (alivePlayers.length === 1 && players.length > 1) {
+        ctx.fillStyle = 'black';
+        ctx.font = '30px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText("Winner!", canvas.width/2, 100);
+        ctx.font = '20px Arial';
+        ctx.fillText("Press R to Reset", canvas.width/2, 140);
+    } else if (alivePlayers.length === 0) {
+        ctx.fillStyle = 'black';
+        ctx.font = '30px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText("Draw!", canvas.width/2, 100);
+        ctx.fillText("Press R to Reset", canvas.width/2, 140);
+    }
+}
+
+/**
+ * LOOP
+ */
+function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+}
+
+// Start
+resetGame();
+loop();
+
+</script>
+</body>
+</html>
