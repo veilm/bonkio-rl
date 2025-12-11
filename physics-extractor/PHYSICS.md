@@ -96,12 +96,33 @@ Update this document as new recordings are analyzed so we build a full physics p
 - Because we accelerated back and forth between finite walls, the mean terminal speeds vary mostly with how long we could thrust before each collision (smaller maps → less time → smaller `|v|`).
 - Future work: capture “release” behavior (tap RIGHT and let go before hitting a wall) to measure friction when no keys are held, and record air-control tests (hold RIGHT while airborne) to see if the same thrust applies mid-air.
 
+## Dataset `3-tap-horizontal` (single tap + release)
+
+- Procedure: stand at rest on the flat strip, start recording, send a single LEFT/RIGHT tap via ydotool, and keep recording as the ball coasts. Recordings end while still sliding, so pass `--trim-ms 100` to drop the capture-stop lag. Run as `python analyze_jumps.py --mode horizontal --horizontal-style tap --trim-ms 100 data/3-tap-horizontal`.
+- The tap analyzer locates the first movement, estimates the impulse (`peak_v`), the average acceleration while the key was held (`thrust`, computed from the velocity gain and measured hold duration), and the long glide that follows (distance/time until the recording stops). Because the floor is almost frictionless, the decay slope (“release acceleration”) is ~0 within the captured window.
+
+| Dataset | Ball diameter (px) | Tap direction | Tap duration (s) | Impulse speed (ball/s) | Mean thrust (ball/s²) | Glide time (s) | Glide distance (ball) |
+|---------|-------------------:|---------------|-----------------:|-----------------------:|----------------------:|---------------:|----------------------:|
+| 11-left | 22.77 | L | 0.217 | 0.24 | 0.87 | 21.0 | 7.40 |
+| 5-right-2 | 48.80 | R | 0.217 | 0.34 | 1.56 | 44.3 | 9.68 |
+| 5-left-0 | 48.80 | L | 0.201 | 0.41 | 2.03 | 318.2 | 18.28 |
+| 5-left-1 | 48.80 | L | 0.200 | 0.47 | 2.33 | 197.6 | 16.69 |
+| 2-right | 81.34 | R | 0.201 | 0.30 | 1.49 | 54.3 | 8.34 |
+
+**Interpretation**
+
+- A single tap imparts a small horizontal impulse: **peak speeds range 0.24–0.47 ball-diameters/s** (≈0.24–0.47 m/s). Because the ydotool tap lasts ~0.2 s, the implied average thrust while the key is held is ~1.4 ± 0.6 ball/s² (much weaker than the 5.45 ball/s² we get from holding the key continuously).
+- Once the key is released, the ball coasts almost indefinitely; even after 3–5 minutes the speed remains >0.1 ball/s. Within the captured window we couldn’t detect a measurable release deceleration, so ground friction in Bonk is extremely low.
+- Glide distance is proportional to the impulse (roughly 16–18 ball diameters for the larger tap). To fully measure the decay constant we’ll need recordings that continue all the way until the ball stops.
+- Follow-up experiments: record air taps (jump, then tap sideways once) to see if airborne friction differs, capture longer coasts until the ball stops to measure the true drag, and test multi-tap combos (double taps, tap + hold) to build an input-to-impulse lookup.
+- **Engine simplification**: because both air resistance and ground friction are below our measurement noise (<10⁻³ ball/s²), we will model the environment as *drag-free*. The simulator will only integrate constant accelerations (gravity, UP thrust, horizontal thrust) plus collision responses; no damping terms are needed unless future data shows otherwise.
+
 ## Next high-priority experiment
 
-Record a **single-frame horizontal tap / release** (press RIGHT or LEFT briefly, let go before hitting a wall) both on the ground and mid-air. Logging `X_px` / `BallWidth_px` during those motions will let us:
+Record a **single-frame horizontal tap / release while airborne**, and extend the ground recordings until the ball actually stops (even though we expect zero drag, collecting “stop time” will confirm it). Logging `X_px` / `BallWidth_px` during those motions will let us:
 
-- Measure how quickly horizontal velocity decays with no input (ground friction vs. air drag).
-- Compare ground vs. air thrust to see if the 5.45 m/s² figure holds while airborne.
-- Capture any coupling when UP and RIGHT are pressed together.
+- Measure how quickly horizontal velocity decays with no input in the air vs. on the ground.
+- Compare airborne vs. grounded tap impulses to see if thrust carries over identically.
+- Capture any coupling when UP and RIGHT are pressed together mid-air.
 
-Reuse the ydotool macro for precise durations, then run `analyze_jumps.py --mode horizontal ... --trim-ms 100` (if needed) to fit each segment just like we did for the constant-hold runs.
+Reuse the ydotool macro for precise durations, then run `analyze_jumps.py --mode horizontal --horizontal-style tap --trim-ms 100 ...` to fit each segment just like we did for the ground taps.

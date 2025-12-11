@@ -53,6 +53,24 @@ class RunStats:
     terminal_velocity_units: Optional[float]
 
 
+@dataclass
+class TapStats:
+    index: int
+    start_ms: float
+    duration_s: float
+    press_duration_s: float
+    direction: str
+    thrust_acceleration_px: Optional[float]
+    thrust_acceleration_units: Optional[float]
+    release_acceleration_px: Optional[float]
+    release_acceleration_units: Optional[float]
+    peak_speed_px: Optional[float]
+    peak_speed_units: Optional[float]
+    glide_duration_s: Optional[float]
+    distance_px: Optional[float]
+    distance_units: Optional[float]
+
+
 def load_json_recording(path: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     raw = json.loads(path.read_text())
     t = np.array([float(row[0]) for row in raw])
@@ -263,6 +281,94 @@ def analyze_horizontal(
     return stats
 
 
+def smooth_series(values: np.ndarray, window: int) -> np.ndarray:
+    if window <= 1:
+        return values
+    kernel = np.ones(window) / window
+    return np.convolve(values, kernel, mode="same")
+
+
+def analyze_horizontal_tap(
+    t: np.ndarray,
+    x: np.ndarray,
+    width: np.ndarray,
+    speed_start: float = 5.0,
+    speed_stop: float = 0.5,
+    press_window: float = 0.2,
+    smooth_window: int = 5,
+) -> List[TapStats]:
+    if len(t) < 5:
+        return []
+    t_sec = (t - t[0]) / 1000.0
+    vx = np.gradient(x, t_sec, edge_order=1)
+    vx = smooth_series(vx, smooth_window)
+    moving = np.abs(vx) > speed_start
+
+    idx = np.argmax(moving) if np.any(moving) else None
+    if idx is None or not moving[idx]:
+        return []
+    pre_samples = 2
+    start = max(0, idx - pre_samples)
+    end = len(vx) - 1
+
+    stats: List[TapStats] = []
+    ball_px = float(np.nanmean(width)) if np.any(~np.isnan(width)) else None
+
+    for seg_idx, (start, end) in enumerate([(start, end)]):
+        if end - start < 5:
+            continue
+        peak_relative = np.argmax(np.abs(vx[start : end + 1]))
+        peak = start + peak_relative
+        direction = "right" if vx[peak] >= 0 else "left"
+
+        thrust_end_time = min(t_sec[peak], t_sec[start] + press_window)
+        thrust_end_idx = np.searchsorted(t_sec, thrust_end_time)
+        if thrust_end_idx <= start + 1:
+            thrust_end_idx = min(start + 3, end)
+        press_duration = max(t_sec[thrust_end_idx] - t_sec[start], 1e-6)
+        v_start = float(abs(vx[start]))
+
+        release_start = max(thrust_end_idx, start + 1)
+        release_slice = slice(release_start, end + 1)
+        release_t = t_sec[release_slice]
+        release_v = vx[release_slice]
+        release_accel = None
+        if len(release_t) >= 2 and release_t[-1] - release_t[0] > 1e-6:
+            coeffs = np.polyfit(release_t, release_v, 1)
+            release_accel = float(coeffs[0])
+
+        peak_speed = float(np.max(np.abs(vx[start : end + 1])))
+        delta_v = max(peak_speed - v_start, 0.0)
+        thrust_accel_px = float(delta_v / press_duration) if press_duration > 0 else None
+        thrust_accel_units = (
+            (thrust_accel_px / ball_px) if (thrust_accel_px is not None and ball_px) else None
+        )
+        glide_duration = t_sec[end] - t_sec[peak]
+        total_duration = t_sec[end] - t_sec[start]
+        press_duration = t_sec[thrust_end_idx] - t_sec[start]
+        distance = float(np.abs(x[end] - x[start]))
+
+        stats.append(
+            TapStats(
+                index=seg_idx,
+                start_ms=float(t[start]),
+                duration_s=float(total_duration),
+                press_duration_s=float(press_duration),
+                direction=direction,
+                thrust_acceleration_px=thrust_accel_px,
+                thrust_acceleration_units=thrust_accel_units,
+                release_acceleration_px=release_accel,
+                release_acceleration_units=(release_accel / ball_px) if (release_accel is not None and ball_px) else None,
+                peak_speed_px=peak_speed,
+                peak_speed_units=(peak_speed / ball_px) if (ball_px and peak_speed is not None) else None,
+                glide_duration_s=float(glide_duration) if glide_duration is not None else None,
+                distance_px=distance,
+                distance_units=(distance / ball_px) if (ball_px and distance is not None) else None,
+            )
+        )
+    return stats
+
+
 def plot_overview(
     t: np.ndarray,
     y: np.ndarray,
@@ -373,6 +479,12 @@ def main() -> None:
         help="analyze jumps (vertical) or horizontal runs",
     )
     parser.add_argument(
+        "--horizontal-style",
+        choices=("hold", "tap"),
+        default="hold",
+        help="horizontal analysis type: constant hold or single tap/release",
+    )
+    parser.add_argument(
         "--trim-ms",
         type=float,
         default=0.0,
@@ -395,6 +507,30 @@ def main() -> None:
         type=float,
         default=5.0,
         help="horizontal mode: maximum segment duration in seconds (set <=0 to disable)",
+    )
+    parser.add_argument(
+        "--tap-speed-start",
+        type=float,
+        default=3.0,
+        help="tap mode: threshold speed (px/s) to detect movement start",
+    )
+    parser.add_argument(
+        "--tap-speed-stop",
+        type=float,
+        default=0.5,
+        help="tap mode: threshold speed (px/s) to detect movement end",
+    )
+    parser.add_argument(
+        "--tap-press-window",
+        type=float,
+        default=0.2,
+        help="tap mode: seconds of data to use for thrust acceleration fit",
+    )
+    parser.add_argument(
+        "--tap-smooth-window",
+        type=int,
+        default=3,
+        help="tap mode: moving-average window (samples) for velocity smoothing",
     )
     args = parser.parse_args()
 
@@ -458,45 +594,82 @@ def main() -> None:
                 }
             )
         else:
-            stats = analyze_horizontal(
-                t,
-                x,
-                width,
-                velocity_threshold=args.h_velocity_threshold,
-                min_duration=args.h_min_duration,
-                max_duration=None if args.h_max_duration and args.h_max_duration <= 0 else args.h_max_duration,
-            )
+            if args.horizontal_style == "hold":
+                stats = analyze_horizontal(
+                    t,
+                    x,
+                    width,
+                    velocity_threshold=args.h_velocity_threshold,
+                    min_duration=args.h_min_duration,
+                    max_duration=None if args.h_max_duration and args.h_max_duration <= 0 else args.h_max_duration,
+                )
+            else:
+                stats = analyze_horizontal_tap(
+                    t,
+                    x,
+                    width,
+                    speed_start=args.tap_speed_start,
+                    speed_stop=args.tap_speed_stop,
+                    press_window=args.tap_press_window,
+                    smooth_window=args.tap_smooth_window,
+                )
             if len(stats) == 0:
                 print(f"Skipping {path} (no horizontal runs detected)")
                 continue
 
             ball_px = safe_mean([width[i] for i in range(len(width)) if not np.isnan(width[i])])
 
-            print(f"\nAnalysis for {dataset_name} (horizontal)")
+            if args.horizontal_style == "hold":
+                print(f"\nAnalysis for {dataset_name} (horizontal hold)")
+            else:
+                print(f"\nAnalysis for {dataset_name} (horizontal tap)")
             print(f"Detected runs: {len(stats)}")
             if ball_px:
                 print(f"Mean on-screen ball diameter: {ball_px:.2f} px")
             print()
-            header = "run duration(s) dir accel(px/s^2) accel(ball/s^2) v_terminal(px/s) v_terminal(ball/s)"
-            print(header)
-            for s in stats:
-                print(
-                    f"{s.index:02d} {s.duration_s:8.3f} {s.direction:>5s} "
-                    f"{s.acceleration_px:14.2f} {format_val(s.acceleration_units, 2):>16s} "
-                    f"{s.terminal_velocity_px:17.2f} {format_val(s.terminal_velocity_units, 2):>20s}"
+            if args.horizontal_style == "hold":
+                header = "run duration(s) dir accel(px/s^2) accel(ball/s^2) v_terminal(px/s) v_terminal(ball/s)"
+                print(header)
+                for s in stats:
+                    print(
+                        f"{s.index:02d} {s.duration_s:8.3f} {s.direction:>5s} "
+                        f"{s.acceleration_px:14.2f} {format_val(s.acceleration_units, 2):>16s} "
+                        f"{s.terminal_velocity_px:17.2f} {format_val(s.terminal_velocity_units, 2):>20s}"
+                    )
+                summaries.append(
+                    {
+                        "name": dataset_name,
+                        "count": len(stats),
+                        "ball_px": ball_px,
+                        "accel_px": mean_abs([s.acceleration_px for s in stats]),
+                        "accel_ball": mean_abs([s.acceleration_units for s in stats]),
+                        "v_px": mean_abs([s.terminal_velocity_px for s in stats]),
+                        "v_ball": mean_abs([s.terminal_velocity_units for s in stats]),
+                    }
                 )
-
-            summaries.append(
-                {
-                    "name": dataset_name,
-                    "count": len(stats),
-                    "ball_px": ball_px,
-                    "accel_px": mean_abs([s.acceleration_px for s in stats]),
-                    "accel_ball": mean_abs([s.acceleration_units for s in stats]),
-                    "v_px": mean_abs([s.terminal_velocity_px for s in stats]),
-                    "v_ball": mean_abs([s.terminal_velocity_units for s in stats]),
-                }
-            )
+            else:
+                header = (
+                    "run press_dur(s) dir thrust(ball/s^2) release(ball/s^2) peak_v(ball/s) glide(s) distance(ball)"
+                )
+                print(header)
+                for s in stats:
+                    print(
+                        f"{s.index:02d} {s.press_duration_s:8.3f} {s.direction:>5s} "
+                        f"{format_val(s.thrust_acceleration_units, 2):>18s} {format_val(s.release_acceleration_units, 2):>17s} "
+                        f"{format_val(s.peak_speed_units, 2):>15s} {format_val(s.glide_duration_s, 2):>9s} "
+                        f"{format_val(s.distance_units, 2):>15s}"
+                    )
+                summaries.append(
+                    {
+                        "name": dataset_name,
+                        "count": len(stats),
+                        "ball_px": ball_px,
+                        "thrust": mean_abs([s.thrust_acceleration_units for s in stats]),
+                        "release": mean_abs([s.release_acceleration_units for s in stats]),
+                        "peak_v": mean_abs([s.peak_speed_units for s in stats]),
+                        "distance": mean_abs([s.distance_units for s in stats]),
+                    }
+                )
 
     if len(summaries) > 1:
         print("\nAggregate summary (sorted by ball size):")
@@ -514,17 +687,30 @@ def main() -> None:
                     f"{s['count']:5d}"
                 )
         else:
-            print("dataset ball_px(px) accel(px/s^2) accel(ball/s^2) v(px/s) v(ball/s) runs")
-            for s in summaries:
-                print(
-                    f"{s['name']:20s} "
-                    f"{format_val(s['ball_px']):>11s} "
-                    f"{format_val(s['accel_px']):>14s} "
-                    f"{format_val(s['accel_ball']):>17s} "
-                    f"{format_val(s['v_px']):>9s} "
-                    f"{format_val(s['v_ball']):>11s} "
-                    f"{s['count']:5d}"
-                )
+            if args.horizontal_style == "hold":
+                print("dataset ball_px(px) accel(px/s^2) accel(ball/s^2) v(px/s) v(ball/s) runs")
+                for s in summaries:
+                    print(
+                        f"{s['name']:20s} "
+                        f"{format_val(s['ball_px']):>11s} "
+                        f"{format_val(s['accel_px']):>14s} "
+                        f"{format_val(s['accel_ball']):>17s} "
+                        f"{format_val(s['v_px']):>9s} "
+                        f"{format_val(s['v_ball']):>11s} "
+                        f"{s['count']:5d}"
+                    )
+            else:
+                print("dataset ball_px(px) thrust(ball/s^2) release(ball/s^2) peak_v(ball/s) distance(ball) runs")
+                for s in summaries:
+                    print(
+                        f"{s['name']:20s} "
+                        f"{format_val(s['ball_px']):>11s} "
+                        f"{format_val(s['thrust']):>18s} "
+                        f"{format_val(s['release']):>17s} "
+                        f"{format_val(s['peak_v']):>15s} "
+                        f"{format_val(s['distance']):>14s} "
+                        f"{s['count']:5d}"
+                    )
 
 
 if __name__ == "__main__":
