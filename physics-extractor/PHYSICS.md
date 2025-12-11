@@ -35,7 +35,10 @@ Update this document as new recordings are analyzed so we build a full physics p
 | size_13 | 16.27 | 19.56 | 1.20 | 155.0 | 9.53 |
 | size_12 | 19.52 | 23.47 | 1.20 | 186.0 | 9.53 |
 | size_9  | 29.28 | 35.18 | 1.20 | 278.5 | 9.51 |
+| size_6  | 42.30 | 50.77 | 1.20 | 400.7 | 9.47 |
 | size_4  | 55.31 | 66.39 | 1.20 | 524.3 | 9.48 |
+| size_3  | 65.07 | 78.09 | 1.20 | 616.5 | 9.47 |
+| size_2  | 81.34 | 97.56 | 1.20 | 768.7 | 9.45 |
 | size_1  | 97.61 | 122.64 | 1.26† | 918.2 | 9.41 |
 
 † size_1 contained one slightly taller jump (likely two-frame hold); the other five hops match the 1.20 ball apex.
