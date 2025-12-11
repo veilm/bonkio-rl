@@ -46,6 +46,42 @@ Update this document as new recordings are analyzed so we build a full physics p
 **Takeaways**
 
 - Gravity in raw pixels/s² scales linearly with zoom: halving the on-screen ball size roughly halves the measured gravity.
-- After normalizing by the ball diameter, gravity is ~9.5 ball-diameters/s² at every zoom. This implies the underlying physics uses fixed world units; the renderer simply scales everything.
+- After normalizing by the ball diameter, gravity clusters tightly between **9.41–9.53** ball-diameters/s² (mean across 49 jumps: **9.48 ± 0.04**). This implies the underlying physics uses fixed world units; the renderer simply scales everything.
 - Apex height also sits at ~1.20 ball diameters with single-frame taps, so “full jump” height is effectively independent of zoom once scaled.
 - The analysis script’s normalized outputs give us a zoom-proof reference for future experiments (multi-frame holds, sideways motion, different materials, etc.).
+
+**Working assumptions going forward**
+
+- We define the Bonk ball diameter as **1 meter**. Every measurement expressed “in meters” uses this conversion.
+- Canonical gravity will be **9.5 m/s²** for simulations and models, with domain randomization spanning roughly **9.0–10.0 m/s²** to cover observed variation (9.41–9.53).
+- The current scope is Bonk.io only, so all future experiments inherit this unit system and gravity estimate unless new data suggests otherwise.
+
+## Dataset `1-hold-up` (continuous jump hold)
+
+- Procedure: from rest on a flat, non-bouncy surface, start recording, hold the UP key continuously via ydotool, let the character auto-hop several times, release, then stop the recording (`physics-extractor/data/1-hold-up/size*.csv`).
+- Each “steady” hop (≈2.4 s airtime) shows a much lower downward acceleration because the constant UP input counteracts gravity throughout the flight. Very long segments (≈5–12 s) come from the moment we stopped holding UP; they behave like normal gravity and are excluded from the summary below.
+- Filtering to hops with durations between 1.5 s and 5 s yields the following net downward accelerations (values are already normalized by ball diameter):
+
+| Dataset | Ball diameter (px) | Steady hop apex (ball) | Net downward accel (ball/s²) |
+|---------|-------------------:|-----------------------:|------------------------------:|
+| size11  | 22.78 | 2.87 | 3.81 |
+| size6   | 42.30 | 2.87 | 3.81 |
+| size4   | 55.31 | 2.87 | 3.81 |
+| size2   | 81.34 | *(need more samples)* | *(n/a)* |
+
+**Interpretation**
+
+- While UP is held, the player experiences a net downward acceleration of **3.81 ± 0.003 ball-diameters/s²** (~3.81 m/s²). Given our independent gravity measurement of 9.5 m/s², this implies the UP thrust contributes an upward acceleration of about **5.7 m/s²** every frame the key is held.
+- Continuous holds roughly double the airtime (≈2.4 s) and push the apex to ~2.9 ball diameters (~2.9 m).
+- When the key is released, the downward acceleration snaps back to 9.5 m/s² instantly, which matches what you feel in-game (a hard drop).
+- Next data pass: capture additional runs at the extreme zooms (size13/size1) to confirm the thrust remains constant there too, and fill in size2 for completeness.
+
+## Next high-priority experiment
+
+Record a **single-frame horizontal tap** (press RIGHT or LEFT for exactly one frame while standing still). Logging `X_px`/`BallWidth_px` during that motion will let us:
+
+- Measure ground-plane horizontal acceleration and friction while the key is held.
+- Compare motion while airborne to detect air-control forces.
+- Estimate damping when the key is released.
+
+Reuse the ydotool macro for precise inputs, then run `analyze_jumps.py` (or a derivative focusing on X) to fit the horizontal trajectory just like we did vertically.
