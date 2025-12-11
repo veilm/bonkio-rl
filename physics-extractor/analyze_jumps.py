@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
 """
-Analyze Bonk.io jump recordings produced by physics-extractor/1.js.
+Analyze Bonk.io jump recordings produced by physics-extractor spy scripts.
 
-Usage:
+Usage examples:
     python analyze_jumps.py data/0-jumps-up-tap.json
+    python analyze_jumps.py data/0-tap-up
 
-The script prints summary statistics and emits plots inside
-physics-extractor/analysis/.
+The script prints summary statistics, optional plots, and aggregate tables
+inside physics-extractor/analysis/.
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Sequence, Tuple
+from typing import Iterable, List, Optional, Sequence, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -32,18 +34,57 @@ class JumpStats:
     apex_height: float
     takeoff_velocity: float
     gravity: float
+    ball_px: Optional[float]
+    apex_height_units: Optional[float]
+    takeoff_velocity_units: Optional[float]
+    gravity_units: Optional[float]
 
 
-def load_recording(path: Path) -> Tuple[np.ndarray, np.ndarray]:
+def load_json_recording(path: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     raw = json.loads(path.read_text())
     t = np.array([float(row[0]) for row in raw])
     y = np.array([float(row[2]) for row in raw])
+    width = np.full_like(y, np.nan, dtype=float)
+    return t, y, width
+
+
+def load_csv_recording(path: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    times: List[float] = []
+    ys: List[float] = []
+    widths: List[float] = []
+    with path.open() as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            times.append(float(row["Time_ms"]))
+            ys.append(float(row["Y_px"]))
+            bw = row.get("BallWidth_px")
+            bh = row.get("BallHeight_px")
+            if bw is not None and bh is not None:
+                widths.append((float(bw) + float(bh)) / 2.0)
+            elif bw is not None:
+                widths.append(float(bw))
+            else:
+                widths.append(float("nan"))
+    t = np.array(times, dtype=float)
+    y = np.array(ys, dtype=float)
+    width = np.array(widths, dtype=float)
+    return t, y, width
+
+
+def load_recording(path: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if path.suffix.lower() == ".json":
+        t, y, width = load_json_recording(path)
+    elif path.suffix.lower() == ".csv":
+        t, y, width = load_csv_recording(path)
+    else:
+        raise ValueError(f"Unsupported file format: {path}")
 
     # Drop duplicate timestamps by keeping the last sample at each time.
     dedup_mask = np.concatenate((np.diff(t) != 0, [True]))
     t = t[dedup_mask]
     y = y[dedup_mask]
-    return t, y
+    width = width[dedup_mask]
+    return t, y, width
 
 
 def detect_airborne_segments(
@@ -69,14 +110,18 @@ def fit_parabola(ts: np.ndarray, ys: np.ndarray) -> Tuple[float, float, float]:
     return coeffs[0], coeffs[1], coeffs[2]
 
 
-def analyze_jumps(t: np.ndarray, y: np.ndarray) -> Tuple[List[JumpStats], float]:
+def analyze_jumps(
+    t: np.ndarray, y: np.ndarray, width: Optional[np.ndarray] = None
+) -> Tuple[List[JumpStats], float]:
     baseline = float(np.max(y))
     segments = detect_airborne_segments(t, y, baseline)
     stats: List[JumpStats] = []
+    width = width if width is not None else np.full_like(y, np.nan, dtype=float)
     for idx, (start, end) in enumerate(segments):
         seg_slice = slice(start, end + 1)
         seg_t = (t[seg_slice] - t[start]) / 1000.0  # seconds relative to takeoff
         seg_y = y[seg_slice]
+        seg_w = width[seg_slice]
 
         if len(seg_t) < 5:
             continue
@@ -85,6 +130,16 @@ def analyze_jumps(t: np.ndarray, y: np.ndarray) -> Tuple[List[JumpStats], float]
         apex_time = float(-b / (2 * a))
         apex_y = float(np.polyval([a, b, c], apex_time))
         apex_height = baseline - apex_y
+        finite_w = seg_w[~np.isnan(seg_w)]
+        ball_px = float(np.mean(finite_w)) if finite_w.size else None
+        if ball_px and ball_px != 0:
+            apex_units = apex_height / ball_px
+            takeoff_units = b / ball_px
+            gravity_units = gravity / ball_px
+        else:
+            apex_units = None
+            takeoff_units = None
+            gravity_units = None
 
         stats.append(
             JumpStats(
@@ -97,6 +152,10 @@ def analyze_jumps(t: np.ndarray, y: np.ndarray) -> Tuple[List[JumpStats], float]
                 apex_height=apex_height,
                 takeoff_velocity=b,
                 gravity=gravity,
+                ball_px=ball_px,
+                apex_height_units=apex_units,
+                takeoff_velocity_units=takeoff_units,
+                gravity_units=gravity_units,
             )
         )
     mean_gravity = float(np.mean([s.gravity for s in stats]))
@@ -166,36 +225,122 @@ def plot_apexes(stats: Sequence[JumpStats], out_dir: Path, dataset_name: str) ->
     plt.close()
 
 
+def safe_mean(values: Iterable[Optional[float]]) -> Optional[float]:
+    data = [v for v in values if v is not None]
+    if not data:
+        return None
+    return float(np.mean(data))
+
+
+def resolve_inputs(paths: Sequence[Path]) -> List[Path]:
+    files: List[Path] = []
+    for path in paths:
+        if path.is_dir():
+            for suffix in ("*.csv", "*.json"):
+                files.extend(sorted(path.glob(suffix)))
+        elif path.is_file():
+            files.append(path)
+    return sorted(files)
+
+
+def format_val(value: Optional[float], digits: int = 2) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:.{digits}f}"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("recording", type=Path, help="path to JSON recording")
+    parser.add_argument(
+        "paths",
+        nargs="+",
+        type=Path,
+        help="recording file or directory (supports multiple)",
+    )
+    parser.add_argument(
+        "--skip-plots", action="store_true", help="disable PNG output (faster)"
+    )
     args = parser.parse_args()
 
-    t, y = load_recording(args.recording)
-    stats, mean_gravity = analyze_jumps(t, y)
-    dataset_name = args.recording.stem
+    inputs = resolve_inputs(args.paths)
+    if not inputs:
+        raise SystemExit("No recordings found.")
+
     out_dir = Path("physics-extractor") / "analysis"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    if not args.skip_plots:
+        out_dir.mkdir(parents=True, exist_ok=True)
 
-    baseline = float(np.max(y))
-    plot_overview(t, y, stats, baseline, out_dir, dataset_name)
-    plot_normalized_jumps(t, y, stats, baseline, out_dir, dataset_name)
-    plot_apexes(stats, out_dir, dataset_name)
+    summaries = []
+    for path in inputs:
+        t, y, width = load_recording(path)
+        if len(t) == 0:
+            print(f"Skipping {path} (empty recording)")
+            continue
 
-    print(f"Analysis for {dataset_name}")
-    print(f"Detected jumps: {len(stats)}")
-    print(f"Mean gravity (px/s^2): {mean_gravity:.2f}")
-    print(f"Rest height y: {baseline:.2f}")
-    print()
-    header = (
-        "jump duration(s) apex_y apex_height takeoff_v(px/s) gravity(px/s^2) apex_t(s)"
-    )
-    print(header)
-    for s in stats:
-        print(
-            f"{s.index:02d} {s.duration_s:8.3f} {s.apex_y:7.2f} {s.apex_height:11.2f} "
-            f"{s.takeoff_velocity:14.2f} {s.gravity:15.2f} {s.apex_time_s:9.3f}"
+        stats, mean_gravity = analyze_jumps(t, y, width)
+        if len(stats) == 0:
+            print(f"Skipping {path} (no jumps detected)")
+            continue
+
+        dataset_name = path.stem
+        baseline = float(np.max(y))
+
+        if not args.skip_plots:
+            plot_overview(t, y, stats, baseline, out_dir, dataset_name)
+            plot_normalized_jumps(t, y, stats, baseline, out_dir, dataset_name)
+            plot_apexes(stats, out_dir, dataset_name)
+
+        print(f"\nAnalysis for {dataset_name}")
+        print(f"Detected jumps: {len(stats)}")
+        print(f"Mean gravity (px/s^2): {mean_gravity:.2f}")
+        print(f"Rest height y: {baseline:.2f}")
+        ball_px = safe_mean([s.ball_px for s in stats])
+        if ball_px:
+            print(f"Mean on-screen ball diameter: {ball_px:.2f} px")
+        print()
+        header = (
+            "jump duration(s) apex_y apex_height takeoff_v(px/s) gravity(px/s^2) apex_t(s)"
         )
+        print(header)
+        for s in stats:
+            print(
+                f"{s.index:02d} {s.duration_s:8.3f} {s.apex_y:7.2f} {s.apex_height:11.2f} "
+                f"{s.takeoff_velocity:14.2f} {s.gravity:15.2f} {s.apex_time_s:9.3f}"
+            )
+
+        summaries.append(
+            {
+                "name": dataset_name,
+                "jumps": len(stats),
+                "baseline": baseline,
+                "ball_px": ball_px,
+                "apex_px": safe_mean([s.apex_height for s in stats]),
+                "apex_ball": safe_mean([s.apex_height_units for s in stats]),
+                "gravity_px": mean_gravity,
+                "gravity_ball": safe_mean([s.gravity_units for s in stats]),
+                "takeoff_px": safe_mean([s.takeoff_velocity for s in stats]),
+                "takeoff_ball": safe_mean([s.takeoff_velocity_units for s in stats]),
+            }
+        )
+
+    if len(summaries) > 1:
+        print("\nAggregate summary (sorted by ball size):")
+        summaries.sort(
+            key=lambda s: (float("inf") if s["ball_px"] is None else s["ball_px"])
+        )
+        print(
+            "dataset ball_px(px) apex(px) apex(ball) gravity(px/s^2) gravity(ball/s^2) jumps"
+        )
+        for s in summaries:
+            print(
+                f"{s['name']:20s} "
+                f"{format_val(s['ball_px']):>11s} "
+                f"{format_val(s['apex_px']):>8s} "
+                f"{format_val(s['apex_ball']):>10s} "
+                f"{format_val(s['gravity_px']):>15s} "
+                f"{format_val(s['gravity_ball']):>17s} "
+                f"{s['jumps']:5d}"
+            )
 
 
 if __name__ == "__main__":
