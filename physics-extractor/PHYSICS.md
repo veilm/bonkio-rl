@@ -76,12 +76,32 @@ Update this document as new recordings are analyzed so we build a full physics p
 - When the key is released, the downward acceleration snaps back to 9.5 m/s² instantly, which matches what you feel in-game (a hard drop).
 - Next data pass: capture additional runs at the extreme zooms (size13/size1) to confirm the thrust remains constant there too, and fill in size2 for completeness.
 
+## Dataset `2-hold-horizontal` (continuous lateral hold)
+
+- Custom map: long flat strip with non-bouncy floor plus non-bouncy walls at both ends. Start flush against one wall, begin recording, hold LEFT/RIGHT continuously to accelerate toward the opposite wall, collide (instant stop), then hold the opposite key to traverse back. Repeat several times before stopping the recording. Files live in `physics-extractor/data/2-hold-horizontal/`.
+- Run `python analyze_jumps.py --mode horizontal data/2-hold-horizontal` to detect each constant-thrust segment, fit `x(t) = ½ a t² + v₀ t + x₀`, and report accelerations / end velocities in both px/s² and ball-diameters per second².
+- Results below summarize runs that met the default filters (speed > 50 px/s, duration ≥ 0.4 s):
+
+| Dataset | Ball diameter (px) | Runs | Mean accel (ball/s²) | Mean |v| (ball/s) | Max |v| observed (ball/s) |
+|---------|-------------------:|-----:|---------------------:|----------------:|----------------------:|-------------------------:|
+| 13 | 16.27 | 28 | 5.36 ± 0.55 | 17.18 | 25.36 |
+| 11 | 22.78 | 16 | 5.48 ± 0.20 | 14.14 | 21.27 |
+| 9  | 29.28 | 32 | 5.49 ± 0.33 | 13.88 | 18.80 |
+| 5  | 48.80 | 23 | 5.47 ± 0.51 | 10.37 | 14.56 |
+
+**Interpretation**
+
+- Holding LEFT or RIGHT produces a horizontal acceleration of **≈5.45 ball-diameters/s²** (≈5.45 m/s²), independent of zoom once normalized. This is on par with the UP thrust strength, so the Bonk engine uses essentially the same per-frame force budget in X and Y.
+- No horizontal drag or terminal velocity showed up in the logs: speed increases linearly with time until the ball hits a wall. The maximum recorded speed (with ~4 s of thrust at size13) was **25 ball/s** (~25 m/s).
+- Because we accelerated back and forth between finite walls, the mean terminal speeds vary mostly with how long we could thrust before each collision (smaller maps → less time → smaller `|v|`).
+- Future work: capture “release” behavior (tap RIGHT and let go before hitting a wall) to measure friction when no keys are held, and record air-control tests (hold RIGHT while airborne) to see if the same thrust applies mid-air.
+
 ## Next high-priority experiment
 
-Record a **single-frame horizontal tap** (press RIGHT or LEFT for exactly one frame while standing still). Logging `X_px`/`BallWidth_px` during that motion will let us:
+Record a **single-frame horizontal tap / release** (press RIGHT or LEFT briefly, let go before hitting a wall) both on the ground and mid-air. Logging `X_px` / `BallWidth_px` during those motions will let us:
 
-- Measure ground-plane horizontal acceleration and friction while the key is held.
-- Compare motion while airborne to detect air-control forces.
-- Estimate damping when the key is released.
+- Measure how quickly horizontal velocity decays with no input (ground friction vs. air drag).
+- Compare ground vs. air thrust to see if the 5.45 m/s² figure holds while airborne.
+- Capture any coupling when UP and RIGHT are pressed together.
 
-Reuse the ydotool macro for precise inputs, then run `analyze_jumps.py` (or a derivative focusing on X) to fit the horizontal trajectory just like we did vertically.
+Reuse the ydotool macro for precise durations, then run `analyze_jumps.py --mode horizontal ... --trim-ms 100` (if needed) to fit each segment just like we did for the constant-hold runs.
