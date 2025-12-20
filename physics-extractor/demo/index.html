@@ -46,6 +46,24 @@
         color: #ffab70;
       }
 
+      #sidebar label.dropdown {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        font-size: 0.95rem;
+        margin-bottom: 16px;
+        color: #c9d1d9;
+      }
+
+      #sidebar label.dropdown select {
+        padding: 6px 8px;
+        border-radius: 6px;
+        border: 1px solid #30363d;
+        background: #161b22;
+        color: inherit;
+        font-size: 0.9rem;
+      }
+
       #sidebar label.toggle {
         display: flex;
         align-items: center;
@@ -109,20 +127,27 @@
         9.5 ball-diameters/s², up-thrust 5.7, down-thrust 5.7, and horizontal
         thrust 5.45. One ball diameter is treated as one meter.
       </p>
+      <label class="dropdown">
+        <span>Map</span>
+        <select id="map-select"></select>
+      </label>
       <p>Controls:</p>
       <ul>
-        <li><code>ArrowLeft / ArrowRight</code> &rarr; lateral thrust (hold)</li>
         <li>
-          <code>ArrowUp</code> &rarr; tap to jump once, hold to auto-hop
+          <strong>P1</strong>: <code>ArrowLeft / ArrowRight</code> for thrust,
+          <code>ArrowUp</code> to jump, <code>ArrowDown</code> to descend faster
         </li>
-        <li><code>ArrowDown</code> &rarr; hold to descend faster</li>
+        <li>
+          <strong>P2</strong>: <code>A / D</code> for thrust, <code>W</code> to
+          jump, <code>S</code> to descend faster
+        </li>
         <li><code>R</code> &rarr; reset position/velocity</li>
       </ul>
       <p>
         There is no air drag or ground friction, so releasing the keys lets the
         ball coast forever. Hold UP while airborne to see the slower drop that
         matches the continuous-hold recordings, or hold DOWN to slam/shorten
-        jumps.
+        jumps. Falling below the arena respawns you at the latest spawn.
       </p>
       <label class="toggle">
         <input type="checkbox" id="velocity-toggle" />
@@ -141,6 +166,7 @@
       const canvas = document.getElementById("sim");
       const ctx = canvas.getContext("2d");
       const overlay = document.getElementById("overlay");
+      const mapSelect = document.getElementById("map-select");
       const velocityToggle = document.getElementById("velocity-toggle");
 
       const PX_PER_M = 42; // zoomed out to show more map per ball diameter.
@@ -152,53 +178,161 @@
       const H_THRUST = 5.45;
       const TAP_APEX = 1.2;
       const JUMP_SPEED = Math.sqrt(2 * Math.abs(GRAVITY) * TAP_APEX);
-      const WORLD = {
-        floorLevel: 0,
-        ceiling: 9.2,
-        left: -11.5,
-        right: 11.5,
-      };
 
-      const obstacles = [
-        { x: -12.5, y: -1, w: 25, h: 1 }, // floor slab
-        { x: -12.5, y: 0, w: 1, h: 8 }, // left wall
-        { x: 11.5, y: 0, w: 1, h: 8 }, // right wall
-        { x: -4.5, y: 2.2, w: 5, h: 0.4 },
-        { x: 4, y: 3.8, w: 3.5, h: 0.4 },
-        { x: -9.5, y: 1.2, w: 2.5, h: 1.4 },
+      const MAPS = [
+        {
+          id: "mini-course",
+          name: "Mini Course",
+          world: {
+            floorLevel: 0,
+            ceiling: 9.2,
+            left: -11.5,
+            right: 11.5,
+          },
+          obstacles: [
+            { x: -12.5, y: -1, w: 25, h: 1 }, // floor slab
+            { x: -12.5, y: 0, w: 1, h: 8 }, // left wall
+            { x: 11.5, y: 0, w: 1, h: 8 }, // right wall
+            { x: -4.5, y: 2.2, w: 5, h: 0.4 },
+            { x: 4, y: 3.8, w: 3.5, h: 0.4 },
+            { x: -9.5, y: 1.2, w: 2.5, h: 1.4 },
+          ],
+          spawnPoints: [
+            { x: -8, y: 1.3 },
+            { x: -6, y: 1.3 },
+          ],
+          killPlane: -3.5,
+        },
+        {
+          id: "flat-1v1",
+          name: "Flat 1v1",
+          world: {
+            floorLevel: -2,
+            ceiling: 9.2,
+            left: -11.5,
+            right: 11.5,
+          },
+          obstacles: [
+            { x: -5, y: 2.8, w: 10, h: 0.35 }, // suspended dueling platform
+          ],
+          spawnPoints: [
+            { x: -3.8, y: 3.2 },
+            { x: 3.8, y: 3.2 },
+          ],
+          killPlane: -4.5,
+        },
+      ];
+
+      const PLAYER_CONFIGS = [
+        {
+          label: "P1",
+          color: "#58a6ff",
+          controls: {
+            left: "ArrowLeft",
+            right: "ArrowRight",
+            up: "ArrowUp",
+            down: "ArrowDown",
+          },
+        },
+        {
+          label: "P2",
+          color: "#f778ba",
+          controls: {
+            left: "KeyA",
+            right: "KeyD",
+            up: "KeyW",
+            down: "KeyS",
+          },
+        },
       ];
 
       const keys = new Set();
       let showVelocityVector = false;
+      let currentMap = MAPS[0];
+      let world = { ...currentMap.world };
+      let obstacles = currentMap.obstacles;
+      let killPlane = currentMap.killPlane;
 
-      const state = {
-        x: -8,
-        y: 1.3,
+      const players = PLAYER_CONFIGS.map((config, index) => ({
+        label: config.label,
+        color: config.color,
+        controls: config.controls,
+        index,
+        x: 0,
+        y: 0,
         vx: 0,
         vy: 0,
         touchingGround: false,
-      };
+      }));
 
-      function resetState() {
-        state.x = -8;
-        state.y = 1.3;
-        state.vx = 0;
-        state.vy = 0;
+      function respawnPlayer(player) {
+        const spawnList = currentMap.spawnPoints ?? [];
+        let spawn = null;
+        if (spawnList.length > 0) {
+          spawn =
+            spawnList[player.index % spawnList.length] ??
+            spawnList[spawnList.length - 1];
+        }
+        if (!spawn) {
+          spawn = { x: 0, y: 1.5 };
+        }
+        player.x = spawn.x;
+        player.y = spawn.y;
+        player.vx = 0;
+        player.vy = 0;
+        player.touchingGround = false;
       }
 
-      document.getElementById("reset-btn").addEventListener("click", resetState);
+      function respawnAllPlayers() {
+        players.forEach(respawnPlayer);
+      }
+
+      function loadMap(mapId) {
+        const nextMap = MAPS.find((map) => map.id === mapId) ?? MAPS[0];
+        currentMap = nextMap;
+        world = { ...nextMap.world };
+        obstacles = nextMap.obstacles;
+        killPlane = nextMap.killPlane ?? nextMap.world.floorLevel - 4;
+        respawnAllPlayers();
+      }
+
+      function initMapSelect() {
+        MAPS.forEach((map) => {
+          const option = document.createElement("option");
+          option.value = map.id;
+          option.textContent = map.name;
+          mapSelect.appendChild(option);
+        });
+        mapSelect.value = currentMap.id;
+        mapSelect.addEventListener("change", (event) => {
+          loadMap(event.target.value);
+        });
+      }
+
+      document.getElementById("reset-btn").addEventListener("click", respawnAllPlayers);
       velocityToggle.addEventListener("change", () => {
         showVelocityVector = velocityToggle.checked;
       });
+      initMapSelect();
 
       window.addEventListener("keydown", (ev) => {
-        if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(ev.code)) {
+        const preventList = [
+          "ArrowLeft",
+          "ArrowRight",
+          "ArrowUp",
+          "ArrowDown",
+          "KeyA",
+          "KeyD",
+          "KeyW",
+          "KeyS",
+        ];
+        if (preventList.includes(ev.code)) {
           ev.preventDefault();
         }
         keys.add(ev.code);
 
         if (ev.code === "KeyR") {
-          resetState();
+          respawnAllPlayers();
         }
       });
 
@@ -243,42 +377,48 @@
         if (ny > 0.6) {
           // Only treat this as support when the ball's center is over the top face.
           const centerAboveSurface = ball.x >= rect.x - 1e-6 && ball.x <= rect.x + rect.w + 1e-6;
-          if (centerAboveSurface) state.touchingGround = true;
+          if (centerAboveSurface) ball.touchingGround = true;
         }
       }
 
       function physicsStep(dt) {
-        let ax = 0;
-        if (keys.has("ArrowLeft")) ax -= H_THRUST;
-        if (keys.has("ArrowRight")) ax += H_THRUST;
+        players.forEach((player) => {
+          const controls = player.controls;
+          let ax = 0;
+          if (keys.has(controls.left)) ax -= H_THRUST;
+          if (keys.has(controls.right)) ax += H_THRUST;
 
-        let ay = GRAVITY;
-        if (keys.has("ArrowUp")) ay += UP_THRUST;
-        if (keys.has("ArrowDown")) ay -= DOWN_THRUST;
+          let ay = GRAVITY;
+          if (keys.has(controls.up)) ay += UP_THRUST;
+          if (keys.has(controls.down)) ay -= DOWN_THRUST;
 
-        state.vx += ax * dt;
-        state.vy += ay * dt;
-        state.x += state.vx * dt;
-        state.y += state.vy * dt;
+          player.vx += ax * dt;
+          player.vy += ay * dt;
+          player.x += player.vx * dt;
+          player.y += player.vy * dt;
 
-        state.touchingGround = false;
+          player.touchingGround = false;
+          obstacles.forEach((rect) => resolveCircleRect(player, rect));
 
-        obstacles.forEach((rect) => resolveCircleRect(state, rect));
+          if (keys.has(controls.up) && player.touchingGround && player.vy <= 0) {
+            player.vy = JUMP_SPEED;
+            player.touchingGround = false;
+          }
 
-        if (keys.has("ArrowUp") && state.touchingGround && state.vy <= 0) {
-          state.vy = JUMP_SPEED;
-          state.touchingGround = false;
-        }
+          player.x = clamp(player.x, world.left + BALL_RADIUS, world.right - BALL_RADIUS);
+          if (player.x <= world.left + BALL_RADIUS && player.vx < 0) player.vx = 0;
+          if (player.x >= world.right - BALL_RADIUS && player.vx > 0) player.vx = 0;
 
-        state.x = clamp(state.x, WORLD.left + BALL_RADIUS, WORLD.right - BALL_RADIUS);
-        if (state.x <= WORLD.left + BALL_RADIUS && state.vx < 0) state.vx = 0;
-        if (state.x >= WORLD.right - BALL_RADIUS && state.vx > 0) state.vx = 0;
+          const ceiling = world.ceiling - BALL_RADIUS;
+          if (player.y > ceiling) {
+            player.y = ceiling;
+            if (player.vy > 0) player.vy = 0;
+          }
 
-        const ceiling = WORLD.ceiling - BALL_RADIUS;
-        if (state.y > ceiling) {
-          state.y = ceiling;
-          if (state.vy > 0) state.vy = 0;
-        }
+          if (player.y < killPlane) {
+            respawnPlayer(player);
+          }
+        });
       }
 
       function drawScene() {
@@ -292,13 +432,18 @@
         ctx.strokeStyle = "rgba(94, 94, 121, 0.25)";
         ctx.beginPath();
         const gridSpacing = 1;
-        for (let x = -15; x <= 15; x += gridSpacing) {
-          ctx.moveTo(x, -2);
-          ctx.lineTo(x, 9);
+        const gridPadding = 2;
+        const minX = Math.floor(world.left - gridPadding);
+        const maxX = Math.ceil(world.right + gridPadding);
+        const minY = Math.floor((world.floorLevel ?? -2) - gridPadding);
+        const maxY = Math.ceil(world.ceiling + gridPadding);
+        for (let x = minX; x <= maxX; x += gridSpacing) {
+          ctx.moveTo(x, minY);
+          ctx.lineTo(x, maxY);
         }
-        for (let y = -2; y <= 9; y += gridSpacing) {
-          ctx.moveTo(-15, y);
-          ctx.lineTo(15, y);
+        for (let y = minY; y <= maxY; y += gridSpacing) {
+          ctx.moveTo(minX, y);
+          ctx.lineTo(maxX, y);
         }
         ctx.stroke();
 
@@ -307,27 +452,31 @@
           ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
         });
 
-        ctx.fillStyle = "#58a6ff";
-        ctx.beginPath();
-        ctx.arc(state.x, state.y, BALL_RADIUS, 0, Math.PI * 2);
-        ctx.fill();
-
-        if (showVelocityVector) {
-          ctx.strokeStyle = "#f85149";
-          ctx.lineWidth = 2 / PX_PER_M;
+        players.forEach((player) => {
+          ctx.fillStyle = player.color;
           ctx.beginPath();
-          ctx.moveTo(state.x, state.y);
-          ctx.lineTo(state.x + state.vx * 0.15, state.y + state.vy * 0.15);
-          ctx.stroke();
-        }
+          ctx.arc(player.x, player.y, BALL_RADIUS, 0, Math.PI * 2);
+          ctx.fill();
+
+          if (showVelocityVector) {
+            ctx.strokeStyle = "#f85149";
+            ctx.lineWidth = 2 / PX_PER_M;
+            ctx.beginPath();
+            ctx.moveTo(player.x, player.y);
+            ctx.lineTo(player.x + player.vx * 0.15, player.y + player.vy * 0.15);
+            ctx.stroke();
+          }
+        });
 
         ctx.restore();
 
-        overlay.textContent = `pos: (${state.x.toFixed(2)} m, ${state.y.toFixed(
-          2
-        )} m)   vel: (${state.vx.toFixed(2)} m/s, ${state.vy.toFixed(
-          2
-        )} m/s)`;
+        overlay.textContent = players
+          .map(
+            (player) =>
+              `${player.label}: (${player.x.toFixed(2)} m, ${player.y.toFixed(2)} m)` +
+              `  v=(${player.vx.toFixed(2)} m/s, ${player.vy.toFixed(2)} m/s)`
+          )
+          .join("    ");
       }
 
       let last = performance.now();
@@ -340,6 +489,7 @@
         requestAnimationFrame(loop);
       }
 
+      respawnAllPlayers();
       requestAnimationFrame(loop);
     </script>
   </body>
