@@ -131,6 +131,10 @@
         <span>Map</span>
         <select id="map-select"></select>
       </label>
+      <label class="dropdown">
+        <span>P2 AI</span>
+        <select id="ai-select"></select>
+      </label>
       <p>Controls:</p>
       <ul>
         <li>
@@ -167,6 +171,7 @@
       const ctx = canvas.getContext("2d");
       const overlay = document.getElementById("overlay");
       const mapSelect = document.getElementById("map-select");
+      const aiSelect = document.getElementById("ai-select");
       const velocityToggle = document.getElementById("velocity-toggle");
 
       const PX_PER_M = 42; // zoomed out to show more map per ball diameter.
@@ -224,26 +229,33 @@
         },
       ];
 
+      const AI_MODES = [
+        { id: "none", name: "None" },
+        { id: "simple-xy", name: "Simple XY comparison" },
+      ];
+
       const PLAYER_CONFIGS = [
         {
           label: "P1",
-          color: "#58a6ff",
+          color: "#d1d5db",
           controls: {
             left: "ArrowLeft",
             right: "ArrowRight",
             up: "ArrowUp",
             down: "ArrowDown",
           },
+          defaultAiMode: "none",
         },
         {
           label: "P2",
-          color: "#f778ba",
+          color: "#4b5563",
           controls: {
             left: "KeyA",
             right: "KeyD",
             up: "KeyW",
             down: "KeyS",
           },
+          defaultAiMode: "none",
         },
       ];
 
@@ -264,7 +276,13 @@
         vx: 0,
         vy: 0,
         touchingGround: false,
+        aiMode: config.defaultAiMode ?? "none",
+        aiIntent: { left: false, right: false, up: false, down: false },
       }));
+
+      function createBlankIntent() {
+        return { left: false, right: false, up: false, down: false };
+      }
 
       function respawnPlayer(player) {
         const spawnList = currentMap.spawnPoints ?? [];
@@ -282,6 +300,7 @@
         player.vx = 0;
         player.vy = 0;
         player.touchingGround = false;
+        player.aiIntent = createBlankIntent();
       }
 
       function respawnAllPlayers() {
@@ -310,11 +329,29 @@
         });
       }
 
+      function initAISelect() {
+        AI_MODES.forEach((mode) => {
+          const option = document.createElement("option");
+          option.value = mode.id;
+          option.textContent = mode.name;
+          aiSelect.appendChild(option);
+        });
+        if (players[1]) {
+          aiSelect.value = players[1].aiMode;
+        }
+        aiSelect.addEventListener("change", (event) => {
+          if (players[1]) {
+            players[1].aiMode = event.target.value;
+          }
+        });
+      }
+
       document.getElementById("reset-btn").addEventListener("click", respawnAllPlayers);
       velocityToggle.addEventListener("change", () => {
         showVelocityVector = velocityToggle.checked;
       });
       initMapSelect();
+      initAISelect();
 
       window.addEventListener("keydown", (ev) => {
         const preventList = [
@@ -428,16 +465,38 @@
         }
       }
 
+      function computeSimpleXYIntent(player, target) {
+        const intent = createBlankIntent();
+        if (!target) return intent;
+        const tol = 0.05;
+        if (player.x < target.x - tol) intent.right = true;
+        else if (player.x > target.x + tol) intent.left = true;
+        if (player.y < target.y - tol) intent.up = true;
+        else if (player.y > target.y + tol) intent.down = true;
+        return intent;
+      }
+
+      function updateAIIntents() {
+        const reference = players[0];
+        players.forEach((player) => {
+          player.aiIntent = createBlankIntent();
+          if (player.aiMode === "simple-xy" && player !== reference && reference) {
+            player.aiIntent = computeSimpleXYIntent(player, reference);
+          }
+        });
+      }
+
       function physicsStep(dt) {
         players.forEach((player) => {
           const controls = player.controls;
+          const intent = player.aiIntent ?? createBlankIntent();
           let ax = 0;
-          if (keys.has(controls.left)) ax -= H_THRUST;
-          if (keys.has(controls.right)) ax += H_THRUST;
+          if (keys.has(controls.left) || intent.left) ax -= H_THRUST;
+          if (keys.has(controls.right) || intent.right) ax += H_THRUST;
 
           let ay = GRAVITY;
-          if (keys.has(controls.up)) ay += UP_THRUST;
-          if (keys.has(controls.down)) ay -= DOWN_THRUST;
+          if (keys.has(controls.up) || intent.up) ay += UP_THRUST;
+          if (keys.has(controls.down) || intent.down) ay -= DOWN_THRUST;
 
           player.vx += ax * dt;
           player.vy += ay * dt;
@@ -447,7 +506,7 @@
           player.touchingGround = false;
           obstacles.forEach((rect) => resolveCircleRect(player, rect));
 
-          if (keys.has(controls.up) && player.touchingGround && player.vy <= 0) {
+          if ((keys.has(controls.up) || intent.up) && player.touchingGround && player.vy <= 0) {
             player.vy = JUMP_SPEED;
             player.touchingGround = false;
           }
@@ -495,7 +554,7 @@
         }
         ctx.stroke();
 
-        ctx.fillStyle = "#20283a";
+        ctx.fillStyle = "#4b5563";
         obstacles.forEach((rect) => {
           ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
         });
@@ -532,6 +591,7 @@
         const dt = (now - last) / 1000;
         last = now;
         const clampedDt = Math.min(dt, 1 / 30);
+        updateAIIntents();
         physicsStep(clampedDt);
         drawScene();
         requestAnimationFrame(loop);
