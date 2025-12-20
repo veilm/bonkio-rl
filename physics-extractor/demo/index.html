@@ -46,6 +46,19 @@
         color: #ffab70;
       }
 
+      #sidebar label.toggle {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.95rem;
+        color: #c9d1d9;
+        margin-top: 14px;
+      }
+
+      #sidebar label.toggle input {
+        accent-color: #2ea043;
+      }
+
       #sim-container {
         flex: 1;
         display: flex;
@@ -93,8 +106,8 @@
       <h1>Bonk Physics Sandbox</h1>
       <p>
         This tiny canvas world uses the numbers we measured so far: gravity at
-        9.5 ball-diameters/s², up-thrust 5.7, and horizontal thrust 5.45. One
-        ball diameter is treated as one meter.
+        9.5 ball-diameters/s², up-thrust 5.7, down-thrust 5.7, and horizontal
+        thrust 5.45. One ball diameter is treated as one meter.
       </p>
       <p>Controls:</p>
       <ul>
@@ -102,13 +115,19 @@
         <li>
           <code>ArrowUp</code> &rarr; tap to jump once, hold to auto-hop
         </li>
+        <li><code>ArrowDown</code> &rarr; hold to descend faster</li>
         <li><code>R</code> &rarr; reset position/velocity</li>
       </ul>
       <p>
         There is no air drag or ground friction, so releasing the keys lets the
         ball coast forever. Hold UP while airborne to see the slower drop that
-        matches the continuous-hold recordings.
+        matches the continuous-hold recordings, or hold DOWN to slam/shorten
+        jumps.
       </p>
+      <label class="toggle">
+        <input type="checkbox" id="velocity-toggle" />
+        Show velocity vector
+      </label>
     </aside>
     <div id="sim-container">
       <canvas id="sim" width="960" height="600"></canvas>
@@ -122,18 +141,20 @@
       const canvas = document.getElementById("sim");
       const ctx = canvas.getContext("2d");
       const overlay = document.getElementById("overlay");
+      const velocityToggle = document.getElementById("velocity-toggle");
 
-      const PX_PER_M = 70; // visual scale: 1 ball diameter = 1 m.
+      const PX_PER_M = 42; // zoomed out to show more map per ball diameter.
       const BALL_DIAMETER = 1;
       const BALL_RADIUS = BALL_DIAMETER / 2;
       const GRAVITY = -9.5;
       const UP_THRUST = 5.7;
+      const DOWN_THRUST = 5.7; // matches UP magnitude; flips net accel downward.
       const H_THRUST = 5.45;
       const TAP_APEX = 1.2;
       const JUMP_SPEED = Math.sqrt(2 * Math.abs(GRAVITY) * TAP_APEX);
       const WORLD = {
         floorLevel: 0,
-        ceiling: 7.5,
+        ceiling: 9.2,
         left: -11.5,
         right: 11.5,
       };
@@ -148,6 +169,7 @@
       ];
 
       const keys = new Set();
+      let showVelocityVector = false;
 
       const state = {
         x: -8,
@@ -165,9 +187,12 @@
       }
 
       document.getElementById("reset-btn").addEventListener("click", resetState);
+      velocityToggle.addEventListener("change", () => {
+        showVelocityVector = velocityToggle.checked;
+      });
 
       window.addEventListener("keydown", (ev) => {
-        if (["ArrowLeft", "ArrowRight", "ArrowUp"].includes(ev.code)) {
+        if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(ev.code)) {
           ev.preventDefault();
         }
         keys.add(ev.code);
@@ -227,6 +252,7 @@
 
         let ay = GRAVITY;
         if (keys.has("ArrowUp")) ay += UP_THRUST;
+        if (keys.has("ArrowDown")) ay -= DOWN_THRUST;
 
         state.vx += ax * dt;
         state.vy += ay * dt;
@@ -284,12 +310,14 @@
         ctx.arc(state.x, state.y, BALL_RADIUS, 0, Math.PI * 2);
         ctx.fill();
 
-        ctx.strokeStyle = "#f85149";
-        ctx.lineWidth = 2 / PX_PER_M;
-        ctx.beginPath();
-        ctx.moveTo(state.x, state.y);
-        ctx.lineTo(state.x + state.vx * 0.15, state.y + state.vy * 0.15);
-        ctx.stroke();
+        if (showVelocityVector) {
+          ctx.strokeStyle = "#f85149";
+          ctx.lineWidth = 2 / PX_PER_M;
+          ctx.beginPath();
+          ctx.moveTo(state.x, state.y);
+          ctx.lineTo(state.x + state.vx * 0.15, state.y + state.vy * 0.15);
+          ctx.stroke();
+        }
 
         ctx.restore();
 
