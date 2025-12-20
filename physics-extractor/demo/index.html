@@ -227,6 +227,45 @@
           ],
           killPlane: -4.5,
         },
+        {
+          id: "flat-wide",
+          name: "Flat Wide",
+          world: {
+            floorLevel: -2,
+            ceiling: 9.2,
+            left: -11.5,
+            right: 11.5,
+          },
+          obstacles: [
+            { x: -11.5, y: 2.8, w: 23, h: 0.35 }, // spans entire arena width
+          ],
+          spawnPoints: [
+            { x: -8.5, y: 3.2 },
+            { x: 8.5, y: 3.2 },
+          ],
+          killPlane: -5,
+        },
+        {
+          id: "pyramid",
+          name: "Pyramid Steps",
+          world: {
+            floorLevel: -2,
+            ceiling: 9.2,
+            left: -12,
+            right: 12,
+          },
+          obstacles: [
+            { x: -10, y: 1, w: 20, h: 0.5 }, // base
+            { x: -7.5, y: 2, w: 15, h: 0.5 },
+            { x: -5, y: 3, w: 10, h: 0.5 },
+            { x: -2.5, y: 4, w: 5, h: 0.5 }, // top
+          ],
+          spawnPoints: [
+            { x: -9, y: 1.5 },
+            { x: 9, y: 1.5 },
+          ],
+          killPlane: -5,
+        },
       ];
 
       const AI_MODES = [
