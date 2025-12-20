@@ -241,7 +241,9 @@
         }
 
         if (ny > 0.6) {
-          state.touchingGround = true;
+          // Only treat this as support when the ball's center is over the top face.
+          const centerAboveSurface = ball.x >= rect.x - 1e-6 && ball.x <= rect.x + rect.w + 1e-6;
+          if (centerAboveSurface) state.touchingGround = true;
         }
       }
 
