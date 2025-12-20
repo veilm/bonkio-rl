@@ -178,6 +178,7 @@
       const H_THRUST = 5.45;
       const TAP_APEX = 1.2;
       const JUMP_SPEED = Math.sqrt(2 * Math.abs(GRAVITY) * TAP_APEX);
+      const PLAYER_RESTITUTION = 0.4;
 
       const MAPS = [
         {
@@ -381,6 +382,52 @@
         }
       }
 
+      function resolvePlayerPair(a, b) {
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        const minDist = BALL_DIAMETER;
+        let distSq = dx * dx + dy * dy;
+        if (distSq === 0) {
+          dx = 1e-6;
+          dy = 0;
+          distSq = dx * dx + dy * dy;
+        }
+        const dist = Math.sqrt(distSq);
+        if (dist >= minDist) {
+          return;
+        }
+
+        const overlap = minDist - dist;
+        const nx = dx / dist;
+        const ny = dy / dist;
+        const correction = overlap / 2;
+        a.x -= nx * correction;
+        a.y -= ny * correction;
+        b.x += nx * correction;
+        b.y += ny * correction;
+
+        const relVx = b.vx - a.vx;
+        const relVy = b.vy - a.vy;
+        const relVelAlongNormal = relVx * nx + relVy * ny;
+        if (relVelAlongNormal > 0) {
+          return;
+        }
+
+        const j = (-(1 + PLAYER_RESTITUTION) * relVelAlongNormal) / 2;
+        a.vx -= j * nx;
+        a.vy -= j * ny;
+        b.vx += j * nx;
+        b.vy += j * ny;
+      }
+
+      function resolvePlayerCollisions() {
+        for (let i = 0; i < players.length; i++) {
+          for (let j = i + 1; j < players.length; j++) {
+            resolvePlayerPair(players[i], players[j]);
+          }
+        }
+      }
+
       function physicsStep(dt) {
         players.forEach((player) => {
           const controls = player.controls;
@@ -419,6 +466,7 @@
             respawnPlayer(player);
           }
         });
+        resolvePlayerCollisions();
       }
 
       function drawScene() {

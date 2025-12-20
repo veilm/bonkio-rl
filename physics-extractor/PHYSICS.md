@@ -126,3 +126,11 @@ Record a **single-frame horizontal tap / release while airborne**, and extend th
 - Capture any coupling when UP and RIGHT are pressed together mid-air.
 
 Reuse the ydotool macro for precise durations, then run `analyze_jumps.py --mode horizontal --horizontal-style tap --trim-ms 100 ...` to fit each segment just like we did for the ground taps.
+
+## Open questions for full accuracy
+
+- **Player mass / inertia**: The sandbox assumes equal-mass players, so impulses cancel correctly, but we lack a measurement of the actual Bonk mass scaling—especially important once we implement the “heavy” toggle if it truly alters mass or inertia.
+- **Player-player restitution**: We currently use an estimated coefficient (0.4) when two balls collide. Capture real player collision clips to determine the actual bounce ratio.
+- **Downward thrust strength**: The demo mirrors the 5.7 m/s² UP thrust when holding DOWN, yet no dataset confirms how Bonk applies downward thrust (or whether it exists). A “hold DOWN while airborne” recording would nail this.
+- **Heavy key mechanics**: Need to know if “heavy” increases mass, reduces thrust, clamps velocity, changes restitution, or applies another modifier.
+- **Special materials / moves**: Future experiments should document whether certain map materials, bouncy pads, or other key combos introduce additional forces or drag terms we have not modeled yet.
