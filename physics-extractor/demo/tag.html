@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Bonk.io Tag Challenge</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: "Space Grotesk", system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: radial-gradient(circle at top, #0f172a, #020617);
+        color: #e6edf3;
+      }
+
+      #frame {
+        position: relative;
+        display: inline-block;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+        border: 1px solid #1f2937;
+      }
+
+      canvas {
+        display: block;
+        background: #030712;
+      }
+
+      #hud {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        padding: 12px 16px;
+        text-align: center;
+        font-size: 0.95rem;
+        color: #e2e8f0;
+        background: linear-gradient(180deg, rgba(2, 6, 23, 0), rgba(2, 6, 23, 0.85));
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="frame">
+      <canvas id="sim" width="960" height="600"></canvas>
+      <div id="hud"></div>
+    </div>
+
+    <script src="sandbox.js"></script>
+    <script>
+      const canvas = document.getElementById("sim");
+      const hud = document.getElementById("hud");
+      const flatWideMap =
+        BonkSandbox.MAPS.find((map) => map.id === "flat-wide") ?? BonkSandbox.MAPS[0];
+      const playerConfigs = [
+        { ...BonkSandbox.PLAYER_CONFIGS[0], defaultAiMode: "none" },
+        { ...BonkSandbox.PLAYER_CONFIGS[1], defaultAiMode: "simple-xy" },
+      ];
+
+      let state = "idle";
+      let elapsed = 0;
+
+      function setHud(message) {
+        hud.textContent = message;
+      }
+
+      const sandbox = BonkSandbox.createSandbox({
+        canvas,
+        overlay: null,
+        maps: [flatWideMap],
+        initialMapId: "flat-wide",
+        playerConfigs,
+        startPaused: true,
+        showVelocityVector: false,
+        enableDefaultResetKey: false,
+        onResetKey: () => {
+          startRun();
+        },
+        onPlayerCollision: () => {
+          if (state !== "running") return;
+          state = "tagged";
+          sandbox.pause();
+          setHud(`Tagged! Survived ${elapsed.toFixed(1)} s. Press R to try again.`);
+        },
+        onFrame: ({ dt }) => {
+          if (state === "running") {
+            elapsed += dt;
+          }
+        },
+        afterDraw: (ctx) => {
+          ctx.save();
+          ctx.fillStyle = "#f6f8fa";
+          ctx.font = "20px 'Space Grotesk', system-ui, sans-serif";
+          ctx.textBaseline = "top";
+          ctx.textAlign = "left";
+          ctx.fillText(`${elapsed.toFixed(1)} s`, 18, 16);
+          ctx.restore();
+        },
+      });
+
+      sandbox.start();
+      sandbox.pause();
+      setHud("Use Arrow Keys to move. Avoid the gray ball for as long as possible. Press R to start.");
+
+      function startRun() {
+        elapsed = 0;
+        sandbox.respawnPlayers();
+        sandbox.setPlayerAIMode(1, "simple-xy");
+        sandbox.resume();
+        state = "running";
+        setHud("");
+      }
+    </script>
+  </body>
+</html>
