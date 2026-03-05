@@ -1,0 +1,17 @@
+catcher_step,evader_step,catch_rate,timeout_rate,mean_catch_step
+2,2,0.0,1.0,nan
+2,4,0.0,1.0,nan
+2,6,0.0,1.0,nan
+2,8,0.0,1.0,nan
+4,2,0.0,1.0,nan
+4,4,0.0,1.0,nan
+4,6,0.0,1.0,nan
+4,8,0.0,1.0,nan
+6,2,0.0,1.0,nan
+6,4,0.0,1.0,nan
+6,6,0.0,1.0,nan
+6,8,0.0,1.0,nan
+8,2,0.0,1.0,nan
+8,4,0.0,1.0,nan
+8,6,0.0,1.0,nan
+8,8,0.0,1.0,nan
