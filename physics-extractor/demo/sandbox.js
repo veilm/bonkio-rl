@@ -92,6 +92,7 @@
   const AI_MODES = [
     { id: "none", name: "None" },
     { id: "simple-xy", name: "Simple XY comparison" },
+    { id: "external", name: "External policy" },
   ];
 
   const PLAYER_CONFIGS = [
@@ -165,6 +166,7 @@
     let afterDraw = options.afterDraw ?? null;
     let frameHook = options.onFrame ?? null;
     let collisionHandler = options.onPlayerCollision ?? null;
+    let intentProvider = options.intentProvider ?? null;
     const onResetKey = options.onResetKey ?? null;
     const enableDefaultResetKey = options.enableDefaultResetKey !== false;
 
@@ -329,6 +331,18 @@
       const reference = players[0];
       players.forEach((player) => {
         player.aiIntent = createBlankIntent();
+        if (player.aiMode === "external" && typeof intentProvider === "function") {
+          const externalIntent = intentProvider(player, players, currentMap);
+          if (externalIntent) {
+            player.aiIntent = {
+              left: !!externalIntent.left,
+              right: !!externalIntent.right,
+              up: !!externalIntent.up,
+              down: !!externalIntent.down,
+            };
+          }
+          return;
+        }
         if (player.aiMode === "simple-xy" && player !== reference && reference) {
           player.aiIntent = computeSimpleXYIntent(player, reference);
         }
@@ -575,6 +589,9 @@
       },
       setFrameHook: (fn) => {
         frameHook = fn;
+      },
+      setIntentProvider: (fn) => {
+        intentProvider = fn;
       },
       setCollisionHandler: (fn) => {
         collisionHandler = fn;

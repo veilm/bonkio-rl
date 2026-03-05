@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Bonk.io Tag RL Arena</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: "Space Grotesk", system-ui, sans-serif;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: radial-gradient(circle at top, #0f172a, #020617);
+        color: #e6edf3;
+      }
+
+      #layout {
+        display: grid;
+        gap: 14px;
+      }
+
+      #controls {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      select,
+      input,
+      button {
+        background: #0b1220;
+        color: #e6edf3;
+        border: 1px solid #374151;
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-family: inherit;
+      }
+
+      #frame {
+        position: relative;
+        display: inline-block;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+        border: 1px solid #1f2937;
+      }
+
+      canvas {
+        display: block;
+        background: #030712;
+      }
+
+      #hud {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        padding: 12px 16px;
+        text-align: center;
+        font-size: 0.95rem;
+        color: #e2e8f0;
+        background: linear-gradient(180deg, rgba(2, 6, 23, 0), rgba(2, 6, 23, 0.85));
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="layout">
+      <div id="controls">
+        <label>
+          Bot role
+          <select id="botRole">
+            <option value="evader">Evader (human catches with Arrow keys)</option>
+            <option value="catcher">Catcher (human evades with WASD)</option>
+          </select>
+        </label>
+        <label>
+          Policy JSON URL
+          <input id="policyPath" size="44" value="../models/evader_latest.json" />
+        </label>
+        <button id="startButton">Load + Start (R also resets)</button>
+      </div>
+
+      <div id="frame">
+        <canvas id="sim" width="960" height="600"></canvas>
+        <div id="hud"></div>
+      </div>
+    </div>
+
+    <script src="sandbox.js"></script>
+    <script src="rl_policy.js"></script>
+    <script>
+      const canvas = document.getElementById("sim");
+      const hud = document.getElementById("hud");
+      const botRoleEl = document.getElementById("botRole");
+      const policyPathEl = document.getElementById("policyPath");
+      const startButton = document.getElementById("startButton");
+
+      const flatWideMap = BonkSandbox.MAPS.find((map) => map.id === "flat-wide") ?? BonkSandbox.MAPS[0];
+
+      const playerConfigs = [
+        { ...BonkSandbox.PLAYER_CONFIGS[0], defaultAiMode: "none", label: "P1", color: "#d1d5db" },
+        { ...BonkSandbox.PLAYER_CONFIGS[1], defaultAiMode: "none", label: "P2", color: "#4b5563" },
+      ];
+
+      let state = "idle";
+      let elapsed = 0;
+      let roleAwareIntentProvider = null;
+
+      function setHud(message) {
+        hud.textContent = message;
+      }
+
+      const sandbox = BonkSandbox.createSandbox({
+        canvas,
+        overlay: null,
+        maps: [flatWideMap],
+        initialMapId: "flat-wide",
+        playerConfigs,
+        startPaused: true,
+        showVelocityVector: false,
+        enableDefaultResetKey: false,
+        onResetKey: () => {
+          startRun();
+        },
+        intentProvider: (player, players, currentMap) => {
+          if (!roleAwareIntentProvider) return null;
+          return roleAwareIntentProvider.nextIntent(player, players, currentMap);
+        },
+        onPlayerCollision: () => {
+          if (state !== "running") return;
+          state = "tagged";
+          sandbox.pause();
+          const botRole = botRoleEl.value;
+          const humanWon = botRole === "evader";
+          const outcome = humanWon ? "You tagged the bot" : "Bot tagged you";
+          setHud(`${outcome} in ${elapsed.toFixed(1)} s. Press R or Load + Start to retry.`);
+        },
+        onFrame: ({ dt }) => {
+          if (state !== "running") return;
+          elapsed += dt;
+          if (elapsed >= 30) {
+            state = "timeout";
+            sandbox.pause();
+            const botRole = botRoleEl.value;
+            const humanWon = botRole === "catcher";
+            const outcome = humanWon ? "You survived" : "Bot survived";
+            setHud(`${outcome} for 30.0 s. Press R or Load + Start to retry.`);
+          }
+        },
+        afterDraw: (ctx) => {
+          ctx.save();
+          ctx.fillStyle = "#f6f8fa";
+          ctx.font = "20px 'Space Grotesk', system-ui, sans-serif";
+          ctx.textBaseline = "top";
+          ctx.textAlign = "left";
+          ctx.fillText(`${elapsed.toFixed(1)} s`, 18, 16);
+          ctx.restore();
+        },
+      });
+
+      sandbox.start();
+      sandbox.pause();
+
+      function applyRoleMode(botRole) {
+        if (botRole === "evader") {
+          sandbox.setPlayerAIMode(0, "none");
+          sandbox.setPlayerAIMode(1, "external");
+        } else {
+          sandbox.setPlayerAIMode(0, "external");
+          sandbox.setPlayerAIMode(1, "none");
+        }
+      }
+
+      async function startRun() {
+        try {
+          const botRole = botRoleEl.value;
+          const policy = await BonkRLPolicy.loadPolicy(policyPathEl.value);
+          roleAwareIntentProvider = BonkRLPolicy.createIntentProvider({ role: botRole, policy });
+          applyRoleMode(botRole);
+
+          elapsed = 0;
+          roleAwareIntentProvider.reset();
+          sandbox.respawnPlayers();
+          sandbox.resume();
+          state = "running";
+          if (botRole === "evader") {
+            setHud("Human: Arrow keys (catch). Bot: evader.");
+          } else {
+            setHud("Human: WASD (evade). Bot: catcher.");
+          }
+        } catch (err) {
+          console.error(err);
+          state = "idle";
+          sandbox.pause();
+          setHud(`Failed to load policy: ${String(err)}`);
+        }
+      }
+
+      startButton.addEventListener("click", () => {
+        startRun();
+      });
+
+      setHud("Choose role + policy JSON, then click Load + Start. Press R to reset.");
+    </script>
+  </body>
+</html>
